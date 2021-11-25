@@ -6,8 +6,10 @@ import random
 import time
 
 pygame.init()
+pygame.font.init()
 fps = 30
 fpsClock = pygame.time.Clock()
+font = pygame.font.SysFont("Comic Sans MS", 30) 
 
 initial_gravity = 2.8
 
@@ -19,17 +21,20 @@ obstacles_h_speed = -8
 
 block_size = 64
 
-dino_right = pygame.image.load("assets/dino_right.png").convert_alpha()
-dino_right = pygame.transform.scale(dino_right, (block_size, block_size))
+dino_1 = pygame.image.load("assets/dino_1.png").convert_alpha()
+dino_1 = pygame.transform.scale(dino_1, (block_size, block_size))
+dino_2 = pygame.image.load("assets/dino_2.png").convert_alpha()
+dino_2 = pygame.transform.scale(dino_2, (block_size, block_size))
 dino_bend_1 = pygame.image.load("assets/dino_bend_1.png").convert_alpha()
 dino_bend_1 = pygame.transform.scale(dino_bend_1, (block_size, block_size // 2))
+dino_bend_2 = pygame.image.load("assets/dino_bend_2.png").convert_alpha()
+dino_bend_2 = pygame.transform.scale(dino_bend_2, (block_size, block_size // 2))
 pterodactyle_hands_up = pygame.image.load("assets/pterodactyle_hands_up.png").convert_alpha()
 pterodactyle_hands_up = pygame.transform.scale(pterodactyle_hands_up, (block_size // 2, block_size // 2))
 pterodactyle_hands_down = pygame.image.load("assets/pterodactyle_hands_down.png").convert_alpha()
 pterodactyle_hands_down = pygame.transform.scale(pterodactyle_hands_down, (block_size // 2, block_size // 2))
 cactus = pygame.image.load("assets/cactus.png").convert_alpha()
 cactus = pygame.transform.scale(cactus, (block_size // 2, block_size))
-
 
 
 def build_model(input_shape, output_shape):
@@ -50,7 +55,11 @@ def build_model(input_shape, output_shape):
 class Dino(pygame.sprite.Sprite):
     def __init__(self, x, y):
         pygame.sprite.Sprite.__init__(self)
-        self.image = dino_right
+        self.image = dino_1
+        self.images_standing = [dino_1, dino_2]
+        self.images_bend = [dino_bend_1, dino_bend_2]
+        self.epsilon = 0.01
+        self.epsilon_decrease = 0.99
         self.is_bend = False
         self.v_speed = 0
         self.rect = self.image.get_rect()
@@ -64,6 +73,10 @@ class Dino(pygame.sprite.Sprite):
         self.first_entrance = True
         self.y_acceleration = 1
         self.last_action = None
+        self.start_time_change_image = time.time()
+        self.stop_time_change_image = time.time()
+        self.current_image_standing_index = 0
+        self.current_image_bend_index = 0
         self.model_predict = build_model(4, 3)
         self.model_target = build_model(4, 3)
 
@@ -79,6 +92,16 @@ class Dino(pygame.sprite.Sprite):
         if self.v_speed > 30:
             self.v_speed = 30
         if self.y > height * 0.8:
+            if time.time() - self.start_time_change_image > 0.1:
+                if not self.is_bend:
+                    self.image = self.images_standing[self.current_image_standing_index]
+                    self.current_image_standing_index += 1
+                    self.current_image_standing_index %= len(self.images_standing)
+                else:
+                    self.image = self.images_bend[self.current_image_bend_index]
+                    self.current_image_bend_index += 1
+                    self.current_image_bend_index %= len(self.images_bend)
+                self.start_time_change_image = time.time()
             self.v_speed = 0
             if self.first_entrance == True:
                 self.y = height * 0.8
@@ -95,7 +118,7 @@ class Dino(pygame.sprite.Sprite):
                 self.is_bend = True
                 self.jump_is_allowed = False
             elif self.is_bend and action != 2:
-                self.image = dino_right
+                self.image = dino_1
                 self.rect = self.image.get_rect()
                 self.y = ground
                 self.is_bend = False
@@ -115,13 +138,20 @@ class Dino(pygame.sprite.Sprite):
     def choose_action(self, state):
         # {0 : "jump", 1 : "do nothing", 2 : "bend"}
         # print(state)
-        q_predicted_array = self.model_predict.predict(state)
-        action = np.argmax(q_predicted_array)
+        is_random_action = np.random.random() < self.epsilon
+        if is_random_action:
+            action = np.random.randint(0, 4)
+        else:
+            q_predicted_array = self.model_predict.predict(state)
+            action = np.argmax(q_predicted_array)
         return action
 
     def update_model_target(self):
         weights_predict = self.model_predict.get_weights()
         self.model_target.set_weights(weights_predict)
+
+    def save_weights(self, episode):
+        self.model_predict.save_weights(f"model_predict_weights_{episode}.h5")
 
 
 class Obstacle(pygame.sprite.Sprite):
@@ -196,8 +226,10 @@ def nearest_obstacles_positions(n):
 
 exit = False
 
-counter = 0
+episode = 0
+max_time_alive = 0
 while not exit:
+    episode += 1
     obstacles = pygame.sprite.Group()
     obstacles_animal = pygame.sprite.Group()
     done = True
@@ -206,8 +238,9 @@ while not exit:
     reward_decrease = 0.00000001
     game_start_time = time.time()
     last_obstacle = generate_obstacle("cactus", on_earth=True)
+    text_surface_episode = font.render(f"Episode: {episode}", False, (0, 0, 0))
+    text_surface_record = font.render(f"Record: {round(max_time_alive / 1000, 4)}", False, (0, 0, 0))
     while done:
-        counter += 1
         reward += reward_decrease
         game_delta_time = time.time() - game_start_time
         obstacles_h_speed = obstacles_h_speed - 0.00001 * game_delta_time
@@ -217,13 +250,15 @@ while not exit:
                 exit = True
                 done = False
         random_number = random.randint(0, 1000)
-        if random_number > 980 and (last_obstacle is None or abs(last_obstacle.x - 1.2 * width) > minimum_distance_obstacles):
+        if random_number > 950 and (last_obstacle is None or abs(last_obstacle.x - 1.2 * width) > minimum_distance_obstacles):
             random_number_for_type = random.randint(0, 10)
-            if random_number_for_type > 9:
+            if random_number_for_type > 6:
                 last_obstacle = generate_obstacle("pterodactyle", on_earth=False)
             else:
                 last_obstacle = generate_obstacle("cactus", on_earth=True)
         obstacles_positions = nearest_obstacles_positions(1)
+        if obstacles_positions == []:
+            obstacles_positions = [[1400.0, 576.0]]
         state = np.array([[dino.x, dino.y, obstacles_positions[0][0], obstacles_positions[0][1]]])
         state = np.reshape(state, (1, 4))
         dino.update(state)
@@ -233,18 +268,29 @@ while not exit:
             reward = -10
             done = False
         obstacles_positions = nearest_obstacles_positions(1)
+        if obstacles_positions == []:
+            obstacles_positions = [[1400.0, 576.0]]
         # print(state, "I AM HEREEEEE")
         new_state = np.array([[dino.x, dino.y, obstacles_positions[0][0], obstacles_positions[0][1]]])
         new_state = np.reshape(new_state, (1, 4))
         dino.learn(state, new_state, dino.last_action, 0.9, reward)
-        if counter == 50:
-            dino.update_model_target()
-            counter = 0
         pygame.draw.line(screen, (0, 0, 0), (0, height * 0.88), (width, height * 0.88))
         screen.blit(dino.image, (dino.x, dino.y))
+        screen.blit(text_surface_episode, (3, 3))
+        screen.blit(text_surface_record, (3, 40))
         for obstacle in obstacles:
             screen.blit(obstacle.image, (obstacle.x, obstacle.y))
         pygame.display.flip()
         fpsClock.tick(fps)
+
+    if episode % 5 == 0:
+        dino.update_model_target()
+    if episode % 10 == 0:
+        dino.save_weights(episode)
+    if episode % 30 == 0:
+        dino.epsilon *= dino.epsilon_decrease
+    time_alive = time.time() - game_start_time
+    if time_alive > max_time_alive:
+        max_time_alive = time_alive
 
 pygame.quit()
