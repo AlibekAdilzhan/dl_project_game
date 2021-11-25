@@ -1,9 +1,12 @@
+from keras.models import Sequential
+from keras.layers import Dense
+import numpy as np
 import pygame
 import random
 import time
 
 pygame.init()
-fps = 60
+fps = 30
 fpsClock = pygame.time.Clock()
 
 initial_gravity = 2.8
@@ -28,6 +31,22 @@ cactus = pygame.image.load("assets/cactus.png").convert_alpha()
 cactus = pygame.transform.scale(cactus, (block_size // 2, block_size))
 
 
+
+def build_model(input_shape, output_shape):
+    model = Sequential()
+    model.add(Dense(units=16, activation='relu', input_shape=(4, )))
+    # model.add(Dense(units=64, activation='relu'))
+    model.add(Dense(units=8, activation='relu'))
+    model.add(Dense(units=3, activation='relu'))
+
+    model.compile(
+        loss='mse',
+        optimizer='adam',
+        # metrics=['accuracy'],
+    )
+    return model
+
+
 class Dino(pygame.sprite.Sprite):
     def __init__(self, x, y):
         pygame.sprite.Sprite.__init__(self)
@@ -44,10 +63,15 @@ class Dino(pygame.sprite.Sprite):
         self.jump_height = 32
         self.first_entrance = True
         self.y_acceleration = 1
+        self.last_action = None
+        self.model_predict = build_model(4, 3)
+        self.model_target = build_model(4, 3)
 
-    def update(self):
-        keystate = pygame.key.get_pressed()
-        if keystate[pygame.K_UP] and self.v_speed < 0:
+    def update(self, state):
+        # {0 : "jump", 1 : "do nothing", 2 : "bend"}
+        action = self.choose_action(state)
+        self.last_action = action
+        if action == 0 and self.v_speed < 0:
             gravity = initial_gravity * 0.7
         else:
             gravity = initial_gravity
@@ -59,10 +83,10 @@ class Dino(pygame.sprite.Sprite):
             if self.first_entrance == True:
                 self.y = height * 0.8
                 self.first_entrance = False
-            if self.jump_is_allowed and keystate[pygame.K_UP]:
+            if self.jump_is_allowed and action == 0:
                 self.v_speed = -self.jump_height
                 self.first_entrance = True
-            if self.is_bend == False and keystate[pygame.K_DOWN]:
+            if self.is_bend == False and action == 2:
                 self.image = dino_bend_1
                 old_bottom = self.rect.bottom
                 self.rect = self.image.get_rect()
@@ -70,7 +94,7 @@ class Dino(pygame.sprite.Sprite):
                 self.y = height * 0.8 + block_size // 2
                 self.is_bend = True
                 self.jump_is_allowed = False
-            elif self.is_bend and not keystate[pygame.K_DOWN]:
+            elif self.is_bend and action != 2:
                 self.image = dino_right
                 self.rect = self.image.get_rect()
                 self.y = ground
@@ -79,6 +103,25 @@ class Dino(pygame.sprite.Sprite):
         self.y += self.v_speed
         self.rect.y = self.y
         self.rect.x = self.x
+
+    def learn(self, state, next_state, action_index, gamma, reward):
+        q_predicted = np.array(self.model_predict(state))
+        # print(q_predicted)
+        q_target = q_predicted.copy()
+        q_next = np.array(self.model_target.predict(next_state)) # here can be mistake (maybe self.model_predict instead of self.model_target)
+        q_target[0][action_index] = reward + gamma * np.max(q_next[0])
+        self.model_predict.fit(state, q_target, batch_size=1, verbose=0)
+
+    def choose_action(self, state):
+        # {0 : "jump", 1 : "do nothing", 2 : "bend"}
+        # print(state)
+        q_predicted_array = self.model_predict.predict(state)
+        action = np.argmax(q_predicted_array)
+        return action
+
+    def update_model_target(self):
+        weights_predict = self.model_predict.get_weights()
+        self.model_target.set_weights(weights_predict)
 
 
 class Obstacle(pygame.sprite.Sprite):
@@ -141,19 +184,33 @@ def generate_obstacle(type, on_earth=True):
     obstacles.add(obstacle)
     return obstacle
 
+
+def nearest_obstacles_positions(n):
+    positions = []
+    obstacles_list = list(obstacles)
+    for i in range(min(n, len(obstacles_list))):
+        obstacle = obstacles_list[i]
+        position = [obstacle.x, obstacle.y]
+        positions.append(position)
+    return positions
+
 exit = False
 
+counter = 0
 while not exit:
-    done = True
     obstacles = pygame.sprite.Group()
     obstacles_animal = pygame.sprite.Group()
+    done = True
     dino = Dino(10, ground)
+    reward = -5
+    reward_decrease = 0.00000001
     game_start_time = time.time()
-    last_obstacle = None
+    last_obstacle = generate_obstacle("cactus", on_earth=True)
     while done:
+        counter += 1
+        reward += reward_decrease
         game_delta_time = time.time() - game_start_time
         obstacles_h_speed = obstacles_h_speed - 0.00001 * game_delta_time
-        print(dino.y, dino.y + block_size // 2, dino.y + block_size // 4)
         screen.fill((255, 255, 255))
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -166,15 +223,24 @@ while not exit:
                 last_obstacle = generate_obstacle("pterodactyle", on_earth=False)
             else:
                 last_obstacle = generate_obstacle("cactus", on_earth=True)
-        dino.update()
+        obstacles_positions = nearest_obstacles_positions(1)
+        state = np.array([[dino.x, dino.y, obstacles_positions[0][0], obstacles_positions[0][1]]])
+        state = np.reshape(state, (1, 4))
+        dino.update(state)
         obstacles.update()
         collided_obstacles = pygame.sprite.spritecollide(dino, obstacles, dokill=False)
         if collided_obstacles != []:
+            reward = -10
             done = False
+        obstacles_positions = nearest_obstacles_positions(1)
+        # print(state, "I AM HEREEEEE")
+        new_state = np.array([[dino.x, dino.y, obstacles_positions[0][0], obstacles_positions[0][1]]])
+        new_state = np.reshape(new_state, (1, 4))
+        dino.learn(state, new_state, dino.last_action, 0.9, reward)
+        if counter == 50:
+            dino.update_model_target()
+            counter = 0
         pygame.draw.line(screen, (0, 0, 0), (0, height * 0.88), (width, height * 0.88))
-        pygame.draw.line(screen, (255, 0, 0), (0, dino.y + 0 * block_size // 2), (width, dino.y + 0 * block_size // 2))
-        pygame.draw.line(screen, (255, 0, 0), (0, dino.rect.bottom), (width, dino.rect.bottom))
-        pygame.draw.line(screen, (255, 255, 0), (0, dino.rect.top), (width, dino.rect.top))
         screen.blit(dino.image, (dino.x, dino.y))
         for obstacle in obstacles:
             screen.blit(obstacle.image, (obstacle.x, obstacle.y))
