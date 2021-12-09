@@ -3,7 +3,7 @@ import random
 import time
 
 pygame.init()
-fps = 60
+fps = 30
 fpsClock = pygame.time.Clock()
 
 initial_gravity = 2.8
@@ -12,7 +12,7 @@ width, height = 1080, 720
 ground = height * 0.8
 screen = pygame.display.set_mode((width, height))
 minimum_distance_obstacles = 230
-obstacles_h_speed = -8
+obstacles_h_speed = -13
 
 block_size = 64
 
@@ -29,7 +29,7 @@ pterodactyle_hands_up = pygame.transform.scale(pterodactyle_hands_up, (block_siz
 pterodactyle_hands_down = pygame.image.load("assets/pterodactyle_hands_down.png").convert_alpha()
 pterodactyle_hands_down = pygame.transform.scale(pterodactyle_hands_down, (block_size // 2, block_size // 2))
 cactus = pygame.image.load("assets/cactus.png").convert_alpha()
-cactus = pygame.transform.scale(cactus, (block_size // 2, block_size))
+cactus = pygame.transform.scale(cactus, (block_size // 3, block_size // 1.4))
 
 
 class Dino(pygame.sprite.Sprite):
@@ -57,10 +57,10 @@ class Dino(pygame.sprite.Sprite):
 
     def update(self):
         keystate = pygame.key.get_pressed()
-        if keystate[pygame.K_UP] and self.v_speed < 0:
-            gravity = initial_gravity * 0.7
-        else:
-            gravity = initial_gravity
+        # if keystate[pygame.K_UP] and self.v_speed < 0:
+            # gravity = initial_gravity * 0.7
+        # else:
+        gravity = initial_gravity
         self.v_speed += gravity
         if self.v_speed > 30:
             self.v_speed = 30
@@ -145,7 +145,7 @@ def generate_obstacle(type, on_earth=True):
         is_animal = False
         images = []
     if on_earth:
-        obstacle_height = ground
+        obstacle_height = ground + block_size // 4
     else:
         random_number_for_height_type = random.randint(0, 2)
         if random_number_for_height_type == 0:
@@ -173,7 +173,6 @@ while not exit:
     while done:
         game_delta_time = time.time() - game_start_time
         obstacles_h_speed = obstacles_h_speed - 0.00001 * game_delta_time
-        print(dino.y, dino.y + block_size // 2, dino.y + block_size // 4)
         screen.fill((255, 255, 255))
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -186,6 +185,12 @@ while not exit:
                 last_obstacle = generate_obstacle("pterodactyle", on_earth=False)
             else:
                 last_obstacle = generate_obstacle("cactus", on_earth=True)
+        print(dino.y, ground)
+        min_d = 1000
+        for obstacle in obstacles:
+             if dino.x - obstacle.x < 0 and abs(dino.x - obstacle.x) < min_d:
+                 min_d = abs(dino.rect.right - obstacle.rect.left)
+        # print(min_d)
         dino.update()
         obstacles.update()
         collided_obstacles = pygame.sprite.spritecollide(dino, obstacles, dokill=False)

@@ -1,9 +1,17 @@
 from keras.models import Sequential
-from keras.layers import Dense, InputLayer
+from keras.layers import Dense, InputLayer, Conv2D, MaxPooling2D, Flatten
 import numpy as np
 import pygame
 import random
 import time
+import cv2
+from mss import mss
+from PIL import Image
+
+bounding_box = {'top': 360, 'left': 700, 'width': 512, 'height': 512}
+
+sct = mss()
+
 
 pygame.init()
 pygame.font.init()
@@ -37,9 +45,16 @@ cactus = pygame.transform.scale(cactus, (block_size // 2, block_size))
 
 def build_model(input_shape, output_shape):
     model = Sequential()
-    model.add(InputLayer(batch_input_shape=(1, 3)))
-    model.add(Dense(units=10, activation='sigmoid'))
-    model.add(Dense(units=3, activation='linear'))
+    # model.add(InputLayer(batch_input_shape=(1, 3)))
+    # model.add(Dense(units=10, activation='sigmoid'))
+    # model.add(Dense(units=3, activation='linear'))
+    model.add(Conv2D(32, (3, 3), activation="relu", input_shape=(96, 96, 3)))
+    model.add(MaxPooling2D((2, 2)))
+    model.add(Conv2D(16, (3, 3), activation="relu"))
+    model.add(MaxPooling2D((2, 2)))
+    model.add(Flatten())
+    model.add(Dense(128, activation="relu"))
+    model.add(Dense(3, activation="linear"))
 
     model.compile(
         loss='mse',
@@ -280,6 +295,9 @@ while not exit:
     state_before_jumping = None
     minimum_distance_obstacles = 160 / 7 * obstacles_h_speed + 300
     while done:
+        screenshot = sct.grab(bounding_box)
+        screenshot_resized = cv2.resize(np.array(screenshot)[:, :, :3], (96, 96), interpolation=cv2.INTER_AREA)
+        state_screen = np.array([screenshot_resized])
         text_surface_score = font.render(f"Score: {round((time.time() - game_start_time), 0)}", False, (0, 0, 0))
         # reward += reward_decrease
         game_delta_time = time.time() - game_start_time
@@ -298,87 +316,20 @@ while not exit:
             else:
                 last_obstacle = generate_obstacle("cactus", obstacle_width=1.2*width + np.random.randint(random_lower_bound, random_upper_bound), on_earth=True)
         obstacles_positions = nearest_obstacles_positions(1)
-        # obstacles_coords = []
-        # for position in obstacles_positions:
-            # l1_distance = [position[0] - dino.x, position[1] - dino.y]
-            # obstacles_coords += l1_distance
-        # distance_to_obstacles = [((obstacles_positions[i][0] - dino.x)**2 + (obstacles_positions[i][1] - dino.y)**2)**0.5 for i in range(len(obstacles_positions))]
-        state_list = [abs(dino.rect.right - obstacles_positions[0][0]), abs(true_ground - obstacles_positions[0][1]), abs(obstacles_h_speed)]
-        state = np.array([state_list])
-        # print(state)
-        state = np.reshape(state, (1, len(state_list)))
         old_is_flying = dino.is_flying
-        # print(state_list)
-        dino.update(state)
+        dino.update(state_screen)
         reward = 0 if dino.last_action == 1 else -5
         if (dino.is_flying == True and old_is_flying == False) or dino.has_landed:
-            # print("this is the first check point")
-            state_before_jumping = state
+            state_before_jumping = state_screen
         obstacles.update()
         give_reward = update_obstacles_queue()
         if give_reward:
             is_awarded = True
-        # obstacles_positions_queue = [(obstacle.x, obstacle.y) for obstacle in obstacles_queue]
-        # print("I AM HEEEEERRRREEEEEE", obstacles_positions[0][0] - dino.x)
-        # if give_reward:
-            # old_reward = reward
-            # reward = 1000
-            # give_reward = False
-            # is_awarded = True
-        # elif is_awarded:
-            # reward = old_reward
-            # is_awarded = False
         collided_obstacles = pygame.sprite.spritecollide(dino, obstacles, dokill=False)
         if collided_obstacles != []:
             reward = -100
             done = False
-            # print("THERE!")
         obstacles_positions = nearest_obstacles_positions(1)
-        # print(state, "I AM HEREEEEE")
-        # obstacles_coords = []
-        # for position in obstacles_positions:
-            # l1_distance = [position[0] - dino.x, position[1] - dino.y]
-            # obstacles_coords += l1_distance
-        # distance_to_obstacles = [((obstacles_positions[i][0] - dino.x)**2 + (obstacles_positions[i][1] - dino.y)**2)**0.5 for i in range(len(obstacles_positions))]
-        new_state_list = [abs(dino.rect.right - obstacles_positions[0][0]), abs(true_ground - obstacles_positions[0][1]), abs(obstacles_h_speed)]
-        # print(state_list, new_state_list)
-        # print(new_state_list, "222")
-        new_state = np.array([new_state_list])
-        new_state = np.reshape(new_state, (1, len(new_state_list)))
-        # print(obstacles_positions_queue, reward)
-        # print(dino.last_action, reward)
-        # reward_2 = reward
-        # print(len(collided_obstacles), done, episode)
-        if obstacles_queue_front != []:
-            first_obstacle = obstacles_queue_front[0]
-        else:
-            first_obstacle = -1
-        # if dino.y >= ground and first_obstacle != -1 and dino.last_action == 0 and abs(dino.rect.right - first_obstacle.rect.left) <= 150 and abs(dino.rect.right - first_obstacle.rect.left) >= 30:
-            # print("hehehehhehehehhehehehhehehehhehehehhehehehhehehehheheheh")
-            # reward = 1000
-        # else:
-            # reward = reward_2
-        # if first_obstacle != -1:
-            # print(dino.last_action, reward, dino.y, first_obstacle.rect.left - dino.rect.right, dino.is_flying)
-        # print(dino.is_flying, old_is_flying)
-        # print(state_before_jumping)
-        if (dino.is_flying == False and old_is_flying == True) or (dino.is_flying and old_is_flying and dino.y >= ground):
-            if is_awarded == True:
-                reward = 100
-                is_awarded = False
-            # print("this is the second checkpiont and reward is:", reward)
-            # dino.learn(state_before_jumping, new_state, dino.last_action, 0.4, reward, done)
-            experience_list.append([state_before_jumping, new_state, dino.last_action, 0.4, reward, done])
-        elif dino.is_flying == False and old_is_flying == False:
-            # print("this is the thirs chekpoint where in this point reward is:", reward, "collided obstacles:", len(collided_obstacles))
-            # dino.learn(state, new_state, dino.last_action, 0.4, reward, done)
-            experience_list.append([state, new_state, dino.last_action, 0.4, reward, done])
-        elif len(collided_obstacles) != 0 and dino.is_flying == True and old_is_flying == True:
-            # print("this is the fourth chekpoint which I have put to understande it better, award is:", reward)
-            # dino.learn(state_before_jumping, new_state, dino.last_action, 0.4, reward, done)
-            experience_list.append([state_before_jumping, new_state, dino.last_action, 0.4, reward, done])
-        if int(round((time.time() - game_start_time), 0)) % 30 == 0:
-            dino.epsilon *= dino.epsilon_decrease
         pygame.draw.line(screen, (0, 0, 0), (0, height * 0.88), (width, height * 0.88))
         screen.blit(dino.image, (dino.x, dino.y))
         screen.blit(text_surface_episode, (3, 3))
@@ -388,17 +339,43 @@ while not exit:
             screen.blit(obstacle.image, (obstacle.x, obstacle.y))
         pygame.display.flip()
         fpsClock.tick(fps)
+        new_screenshot = sct.grab(bounding_box)
+        new_screenshot_resized = cv2.resize(np.array(new_screenshot)[:, :, :3], (96, 96), interpolation=cv2.INTER_AREA)
+        new_state_screen = np.array([new_screenshot_resized])
+        cv2.imshow('screen', np.array(new_screenshot))
+
+        if (cv2.waitKey(1) & 0xFF) == ord('q'):
+            cv2.destroyAllWindows()
+            break
+        if obstacles_queue_front != []:
+            first_obstacle = obstacles_queue_front[0]
+        else:
+            first_obstacle = -1
+        if (dino.is_flying == False and old_is_flying == True) or (dino.is_flying and old_is_flying and dino.y >= ground):
+            if is_awarded == True:
+                reward = 100
+                is_awarded = False
+            experience_list.append([state_before_jumping, new_state_screen, dino.last_action, 0.4, reward, done])
+            # print("this is first:", reward)
+        elif dino.is_flying == False and old_is_flying == False:
+            # print("this is the second", reward)
+            experience_list.append([state_screen, new_state_screen, dino.last_action, 0.4, reward, done])
+        elif len(collided_obstacles) != 0 and dino.is_flying == True and old_is_flying == True:
+            # print("this is the third:", reward)
+            experience_list.append([state_before_jumping, new_state_screen, dino.last_action, 0.4, reward, done])
+        if int(round((time.time() - game_start_time), 0)) % 30 == 0:
+            dino.epsilon *= dino.epsilon_decrease
     game_over_time = time.time()
     experience_replay(experience_list)
     if episode % 12 == 0:
         dino.update_model_target()
     if episode % 10 == 0:
-        dino.save_weights("model_predict_weights_6.h5", "model_target_weights_6.h5")
+        dino.save_weights("conv_model_predict_weights_1.h5", "conv_model_target_weights_1.h5")
     time_alive = game_over_time - game_start_time
     if time_alive > max_time_alive:
-        with open("records.txt", "a") as fo:
+        with open("records_conv.txt", "a") as fo:
             fo.write(f"{episode} ----- {time_alive}\n")
         max_time_alive = time_alive
-        dino.save_weights("model_predict_weights_record.h5", "model_predict_weights_record.h5")
+        dino.save_weights("conv_model_predict_weights_record.h5", "conv_model_predict_weights_record.h5")
 
 pygame.quit()
